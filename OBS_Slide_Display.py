@@ -3,7 +3,7 @@ import win32api
 from PIL import ImageGrab
 import time
 
-version = "1.1"
+version = "1.2"
 
 monitors = []
 monitor = None
@@ -14,8 +14,8 @@ active = False
 screen_source = None
 screen_visible = True
 
-resolution = 300
-previous_pixels = []
+#resolution = 300
+previous_image = []
 timestamp = 0
 
 slide_visible_duration = 10
@@ -36,30 +36,29 @@ def show_source(source_name, show):
 		obs.sceneitem_list_release(sceneitems)
 
 def update():
-	global previous_pixels
+	global previous_image
 	global timestamp
 	global screen_visible
 
-	im = ImageGrab.grab(monitors[monitor].pyRect, True, True, None)
+	im = ImageGrab.grab(monitors[monitor].pyRect, False, True, None)
 
-	height = monitors[monitor].height()
-	hstep = int(height / resolution)
-	width = monitors[monitor].width()
-	wstep = int(width / resolution)
+	#height = monitors[monitor].height()
+	#hstep = int(height / resolution)
+	#width = monitors[monitor].width()
+	#wstep = int(width / resolution)
 
-	pixels = []
-	for y in range(hstep, height, hstep):
-		for x in range(wstep, width, wstep):
-			pixels.append(im.getpixel((x,y)))
+	#pixels = []
+	#for y in range(hstep, height, hstep):
+	#	for x in range(wstep, width, wstep):
+	#		pixels.append(im.getpixel((x,y)))
 
-	if pixels != previous_pixels:
-		print("new slide!")
-		previous_pixels = pixels
+	if im != previous_image:
+		previous_image = im
 		show_source(screen_source, True)
 		timestamp = time.time()
 		screen_visible = True
 	elif time.time() - timestamp > slide_visible_duration and screen_visible:
-		print("hide slide")
+		print("too old")
 		show_source(screen_source, False)
 		screen_visible = False
 
