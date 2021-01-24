@@ -3,7 +3,7 @@ import win32api
 from PIL import ImageGrab
 import time
 
-version = "1.0"
+version = "1.1"
 
 monitors = []
 monitor = None
@@ -19,6 +19,8 @@ previous_pixels = []
 timestamp = 0
 
 slide_visible_duration = 10
+
+refresh_interval = 500
 
 def show_source(source_name, show):
 	current_scene = obs.obs_frontend_get_current_scene()
@@ -63,7 +65,7 @@ def update():
 
 def activate_timer():
 	global active
-	obs.timer_add(update, 500)
+	obs.timer_add(update, refresh_interval)
 	active = True
 
 def deactivate_timer():
@@ -117,10 +119,13 @@ def script_properties():
 
 	obs.obs_properties_add_int_slider(props, "slide_visible_duration", "Slide Visible Duration", 5, 120, 5)
 
+	obs.obs_properties_add_int_slider(props, "refresh_interval", "Refresh Interval", 100, 5000, 100)
+
 	return props
 
 def script_defaults(settings):
 	obs.obs_data_set_default_int(settings, "slide_visible_duration", slide_visible_duration)
+	obs.obs_data_set_default_int(settings, "refresh_interval", refresh_interval)
 
 def script_update(settings):
 	global monitors
@@ -141,6 +146,9 @@ def script_update(settings):
 
 	global slide_visible_duration
 	slide_visible_duration = obs.obs_data_get_int(settings, "slide_visible_duration")
+
+	global refresh_interval
+	refresh_interval = obs.obs_data_get_int(settings, "refresh_interval")
 
 def script_load(settings):
 	obs.timer_remove(update)
