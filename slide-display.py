@@ -23,47 +23,52 @@ slide_visible_duration = 10
 refresh_interval = 500
 
 def show_source(source_name, show):
-	current_scene = obs.obs_frontend_get_current_scene()
-	current_scene = obs.obs_scene_from_source(current_scene)
-	sceneitems = obs.obs_scene_enum_items(current_scene)
-	if sceneitems != None:
-		for sceneitem in sceneitems:
-			source = obs.obs_sceneitem_get_source(sceneitem)
-			if obs.obs_source_get_name(source) == source_name:
-				obs.obs_sceneitem_set_visible(sceneitem, show)
-				break
-			obs.obs_source_release(source)
-		obs.sceneitem_list_release(sceneitems)
+	scene_source = obs.obs_frontend_get_current_scene()
+	scene = obs.obs_scene_from_source(scene_source)
+	obs.obs_source_release(scene_source)
+	sceneitem = obs.obs_scene_find_source(scene, source_name)
+	obs.obs_scene_release(scene)
+	if sceneitem != None:
+		if show:
+			print("show")
+			obs.obs_sceneitem_set_order(sceneitem, obs.OBS_ORDER_MOVE_TOP)
+		else:
+			print("hide")
+			obs.obs_sceneitem_set_order(sceneitem, obs.OBS_ORDER_MOVE_BOTTOM)
+		obs.obs_sceneitem_release(sceneitem)
 
 def update():
 	global previous_image
 	global timestamp
 	global screen_visible
+	try:
+		im = ImageGrab.grab(monitors[monitor].pyRect, False, True, None)
 
-	im = ImageGrab.grab(monitors[monitor].pyRect, False, True, None)
+		#height = monitors[monitor].height()
+		#hstep = int(height / resolution)
+		#width = monitors[monitor].width()
+		#wstep = int(width / resolution)
 
-	#height = monitors[monitor].height()
-	#hstep = int(height / resolution)
-	#width = monitors[monitor].width()
-	#wstep = int(width / resolution)
+		#pixels = []
+		#for y in range(hstep, height, hstep):
+		#	for x in range(wstep, width, wstep):
+		#		pixels.append(im.getpixel((x,y)))
 
-	#pixels = []
-	#for y in range(hstep, height, hstep):
-	#	for x in range(wstep, width, wstep):
-	#		pixels.append(im.getpixel((x,y)))
-
-	if im != previous_image:
-		previous_image = im
-		show_source(screen_source, True)
-		timestamp = time.time()
-		screen_visible = True
-	elif time.time() - timestamp > slide_visible_duration and screen_visible:
-		print("too old")
-		show_source(screen_source, False)
-		screen_visible = False
-
+		if im != previous_image:
+			previous_image = im
+			show_source(screen_source, True)
+			timestamp = time.time()
+			screen_visible = True
+		elif time.time() - timestamp > slide_visible_duration and screen_visible:
+			print("too old")
+			show_source(screen_source, False)
+			screen_visible = False
+	except Exception  as e:
+		print(e)
 def activate_timer():
 	global active
+	global previous_image
+	previous_image = None
 	obs.timer_add(update, refresh_interval)
 	active = True
 
@@ -80,9 +85,11 @@ def get_current_scene_name():
 
 def on_event(event):
 	if (event == obs.OBS_FRONTEND_EVENT_STREAMING_STARTED or event == obs.OBS_FRONTEND_EVENT_RECORDING_STARTED) and get_current_scene_name() in slide_scenes and not active:
-		activate_timer()
+		if get_current_scene_name() in slide_scenes:
+			if not active:
+				activate_timer()
 	elif event == obs.OBS_FRONTEND_EVENT_SCENE_CHANGED and (obs.obs_frontend_streaming_active() or obs.obs_frontend_recording_active()):
-		if get_current_scene_name() in slide_scenes: #TODO: correct scene
+		if get_current_scene_name() in slide_scenes:
 			if not active:
 				activate_timer()
 		else:
