@@ -3,7 +3,7 @@ import win32api
 from PIL import ImageGrab
 import time
 
-version = "1.2"
+version = "1.3"
 
 monitors = []
 monitor = None
@@ -22,59 +22,60 @@ slide_visible_duration = 10
 
 refresh_interval = 500
 
-def show_source(source_name, show):
-	scene_source = obs.obs_frontend_get_current_scene()
-	scene = obs.obs_scene_from_source(scene_source)
-	obs.obs_source_release(scene_source)
-	sceneitem = obs.obs_scene_find_source(scene, source_name)
-	obs.obs_scene_release(scene)
-	if sceneitem != None:
-		if show:
-			print("show")
-			obs.obs_sceneitem_set_order(sceneitem, obs.OBS_ORDER_MOVE_TOP)
-		else:
-			print("hide")
-			obs.obs_sceneitem_set_order(sceneitem, obs.OBS_ORDER_MOVE_BOTTOM)
-		obs.obs_sceneitem_release(sceneitem)
+def update_opacity(source_name, value):
+	global screen_visible
+	
+	screen_visible = (value == 100)
+
+	source = obs.obs_get_source_by_name(source_name)
+	if source is not None:
+		filter = obs.obs_source_get_filter_by_name(source, "Color Correction")
+		if filter is not None:
+			# Get the settings data object for the filter
+			filter_settings = obs.obs_source_get_settings(filter)
+
+			# Update the hue_shift property and update the filter with the new settings
+			obs.obs_data_set_double(filter_settings, "opacity", value)
+			obs.obs_source_update(filter, filter_settings)
+
+			# Release the resources
+			obs.obs_data_release(filter_settings)
+			obs.obs_source_release(filter)
+		obs.obs_source_release(source)
 
 def update():
 	global previous_image
 	global timestamp
-	global screen_visible
-	try:
-		im = ImageGrab.grab(monitors[monitor].pyRect, False, True, None)
+	
+	timestamp = time.time()
 
-		#height = monitors[monitor].height()
-		#hstep = int(height / resolution)
-		#width = monitors[monitor].width()
-		#wstep = int(width / resolution)
+	im = ImageGrab.grab(monitors[monitor].pyRect, False, True, None)
 
-		#pixels = []
-		#for y in range(hstep, height, hstep):
-		#	for x in range(wstep, width, wstep):
-		#		pixels.append(im.getpixel((x,y)))
-
-		if im != previous_image:
-			previous_image = im
-			show_source(screen_source, True)
+	if im != previous_image:
+		previous_image = im
+		if im.convert("L").getextrema() == (0,0):
+			update_opacity(screen_source, 0)
+		elif not screen_visible:
+			update_opacity(screen_source, 100)
 			timestamp = time.time()
-			screen_visible = True
-		elif time.time() - timestamp > slide_visible_duration and screen_visible:
-			print("too old")
-			show_source(screen_source, False)
-			screen_visible = False
-	except Exception  as e:
-		print(e)
+	elif time.time() - timestamp > slide_visible_duration and screen_visible:
+		update_opacity(screen_source, 0)
+	print(time.time() - timestamp)
+
 def activate_timer():
 	global active
 	global previous_image
+
+	update_opacity(screen_source, 100)
 	previous_image = None
 	obs.timer_add(update, refresh_interval)
 	active = True
 
 def deactivate_timer():
 	global active
+
 	obs.timer_remove(update)
+	update_opacity(screen_source, 100)
 	active = False
 
 def get_current_scene_name():
