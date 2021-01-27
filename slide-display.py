@@ -3,7 +3,7 @@ import win32api
 from PIL import ImageGrab
 import time
 
-version = "1.3"
+version = "1.4"
 
 monitors = []
 monitor = None
@@ -107,6 +107,7 @@ def script_properties():
 	p = obs.obs_properties_add_list(props, "monitor", "Monitor", obs.OBS_COMBO_TYPE_LIST, obs.OBS_COMBO_FORMAT_INT)
 	for i, monitor in enumerate(monitors):
 		obs.obs_property_list_add_int(p, str(monitor.szDevice), i)
+
 	group = obs.obs_properties_create()
 	scene_names = obs.obs_frontend_get_scene_names()
 	if scene_names != None:
@@ -143,10 +144,29 @@ def script_update(settings):
 	global monitor
 	monitor = obs.obs_data_get_int(settings, "monitor")
 
+
+	scene_names = obs.obs_frontend_get_scene_names()
+	if scene_names != None and len(scene_names) > 0:
+		print(scene_names)
+		# Update scene_name list
+		array = obs.obs_data_array_create()
+		for i, scene_name in enumerate(scene_names):
+			data_item = obs.obs_data_create()
+			obs.obs_data_set_string(data_item, "scene_name", scene_name)
+			obs.obs_data_array_insert(array, i, data_item)
+		obs.obs_data_set_array(settings, "scene_names", array)
+
 	global slide_scenes
-	for scene_name in obs.obs_frontend_get_scene_names():
-		if obs.obs_data_get_bool(settings, "slide_scene_" + str(scene_name)):
-			slide_scenes.append(scene_name)
+	slide_scenes = []
+	scene_name_array = obs.obs_data_get_array(settings, "scene_names")
+	if scene_name_array != None:
+		for i in range(obs.obs_data_array_count(scene_name_array)):
+			data_item = obs.obs_data_array_item(scene_name_array, i)
+			scene_name = obs.obs_data_get_string(data_item, "scene_name")
+			checked = obs.obs_data_get_bool(settings, "slide_scene_" + str(scene_name))
+			if checked:
+				slide_scenes.append(scene_name)
+		obs.obs_data_array_release(scene_name_array)
 
 	global screen_source
 	screen_source = obs.obs_data_get_string(settings, "screen_source")
@@ -157,7 +177,6 @@ def script_update(settings):
 	global refresh_interval
 	refresh_interval = obs.obs_data_get_int(settings, "refresh_interval")
 
-def script_load(settings):
 	obs.timer_remove(update)
 	obs.obs_frontend_add_event_callback(on_event)
 
