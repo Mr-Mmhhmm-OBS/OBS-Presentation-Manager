@@ -3,7 +3,7 @@ import win32api
 from PIL import ImageGrab
 import time
 
-version = "1.4"
+version = "1.5"
 
 monitors = []
 monitor = None
@@ -46,8 +46,6 @@ def update_opacity(source_name, value):
 def update():
 	global previous_image
 	global timestamp
-	
-	timestamp = time.time()
 
 	im = ImageGrab.grab(monitors[monitor].pyRect, False, True, None)
 
@@ -58,14 +56,15 @@ def update():
 		elif not screen_visible:
 			update_opacity(screen_source, 100)
 			timestamp = time.time()
-	elif time.time() - timestamp > slide_visible_duration and screen_visible:
+	elif time.time() >= timestamp + slide_visible_duration and screen_visible:
 		update_opacity(screen_source, 0)
-	print(time.time() - timestamp)
 
 def activate_timer():
 	global active
 	global previous_image
+	global timestamp
 
+	timestamp = time.time()
 	update_opacity(screen_source, 100)
 	previous_image = None
 	obs.timer_add(update, refresh_interval)
@@ -147,7 +146,6 @@ def script_update(settings):
 
 	scene_names = obs.obs_frontend_get_scene_names()
 	if scene_names != None and len(scene_names) > 0:
-		print(scene_names)
 		# Update scene_name list
 		array = obs.obs_data_array_create()
 		for i, scene_name in enumerate(scene_names):
@@ -167,6 +165,7 @@ def script_update(settings):
 			if checked:
 				slide_scenes.append(scene_name)
 		obs.obs_data_array_release(scene_name_array)
+	print(slide_scenes)
 
 	global screen_source
 	screen_source = obs.obs_data_get_string(settings, "screen_source")
