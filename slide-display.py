@@ -57,7 +57,7 @@ def update():
 			update_opacity(screen_source, 100)
 			timestamp = time.time()
 	elif time.time() >= timestamp + slide_visible_duration and screen_visible:
-		update_opacity(screen_source, 0)
+			update_opacity(screen_source, 0)
 
 def activate_timer():
 	global active
@@ -165,7 +165,6 @@ def script_update(settings):
 			if checked:
 				slide_scenes.append(scene_name)
 		obs.obs_data_array_release(scene_name_array)
-	print(slide_scenes)
 
 	global screen_source
 	screen_source = obs.obs_data_get_string(settings, "screen_source")
