@@ -2,6 +2,7 @@ import obspython as obs
 import win32api
 from PIL import ImageGrab
 import time
+import continuous_threading
 
 version = "1.5"
 
@@ -14,13 +15,13 @@ active = False
 screen_source = None
 screen_visible = True
 
-#resolution = 300
 previous_image = []
 timestamp = 0
 
 slide_visible_duration = 10
 
-refresh_interval = 500
+refresh_interval = 0.1
+periodic_thread = None
 
 def update_opacity(source_name, value):
 	global screen_visible
@@ -63,17 +64,22 @@ def activate_timer():
 	global active
 	global previous_image
 	global timestamp
+	global periodic_thread
 
 	timestamp = time.time()
 	update_opacity(screen_source, 100)
-	previous_image = None
-	obs.timer_add(update, refresh_interval)
 	active = True
+	previous_image = None
+	periodic_thread = continuous_threading.PeriodicThread(0.1, update)
+	periodic_thread.start()
+	
 
 def deactivate_timer():
 	global active
 
-	obs.timer_remove(update)
+	if periodic_thread != None:
+		periodic_thread.join()
+
 	update_opacity(screen_source, 100)
 	active = False
 
@@ -126,13 +132,13 @@ def script_properties():
 
 	obs.obs_properties_add_int_slider(props, "slide_visible_duration", "Slide Visible Duration", 5, 120, 5)
 
-	obs.obs_properties_add_int_slider(props, "refresh_interval", "Refresh Interval", 100, 5000, 100)
+	obs.obs_properties_add_float_slider(props, "refresh_interval", "Refresh Interval", 0.1, 5, 0.1)
 
 	return props
 
 def script_defaults(settings):
 	obs.obs_data_set_default_int(settings, "slide_visible_duration", slide_visible_duration)
-	obs.obs_data_set_default_int(settings, "refresh_interval", refresh_interval)
+	obs.obs_data_set_default_double(settings, "refresh_interval", refresh_interval)
 
 def script_update(settings):
 	global monitors
@@ -173,9 +179,10 @@ def script_update(settings):
 	slide_visible_duration = obs.obs_data_get_int(settings, "slide_visible_duration")
 
 	global refresh_interval
-	refresh_interval = obs.obs_data_get_int(settings, "refresh_interval")
+	refresh_interval = obs.obs_data_get_double(settings, "refresh_interval")
+	
+	deactivate_timer()
 
-	obs.timer_remove(update)
 	obs.obs_frontend_add_event_callback(on_event)
 
 class Monitor(object):
