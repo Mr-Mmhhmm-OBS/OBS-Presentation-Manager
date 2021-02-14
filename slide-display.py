@@ -13,6 +13,8 @@ slide_scenes = []
 active = False
 
 screen_source = None
+camera_source = None
+camera_blur = 1
 screen_visible = True
 
 previous_image = []
@@ -28,15 +30,19 @@ def update_opacity(source_name, value):
 	
 	screen_visible = (value == 100)
 
+	update_filter(screen_source, "Color Correction", "opacity", value)
+	update_filter(camera_source, "Blur", "Filter.Blur.Size", camera_blur if screen_visible else 1)
+
+def update_filter(source_name, filter_name, filter_field_name, value):
 	source = obs.obs_get_source_by_name(source_name)
 	if source is not None:
-		filter = obs.obs_source_get_filter_by_name(source, "Color Correction")
+		filter = obs.obs_source_get_filter_by_name(source, filter_name)
 		if filter is not None:
 			# Get the settings data object for the filter
 			filter_settings = obs.obs_source_get_settings(filter)
 
 			# Update the hue_shift property and update the filter with the new settings
-			obs.obs_data_set_double(filter_settings, "opacity", value)
+			obs.obs_data_set_double(filter_settings, filter_field_name, value)
 			obs.obs_source_update(filter, filter_settings)
 
 			# Release the resources
@@ -130,6 +136,18 @@ def script_properties():
 				obs.obs_property_list_add_string(screen_source_list, name, name)
 	obs.source_list_release(sources)
 
+	screen_source_list = obs.obs_properties_add_list(props, "camera_source", "Camera Source", obs.OBS_COMBO_TYPE_LIST, obs.OBS_COMBO_FORMAT_STRING)
+	obs.obs_property_list_add_string(screen_source_list, "--Disabled--", "")
+	sources = obs.obs_enum_sources()
+	if sources != None:
+		for source in sources:
+			if obs.obs_source_get_unversioned_id(source) == "dshow_input":
+				name = obs.obs_source_get_name(source)
+				obs.obs_property_list_add_string(screen_source_list, name, name)
+	obs.source_list_release(sources)
+
+	obs.obs_properties_add_int_slider(props, "camera_blur", "Camera Blur", 1, 127, camera_blur)
+
 	obs.obs_properties_add_int_slider(props, "slide_visible_duration", "Slide Visible Duration", 5, 120, 5)
 
 	obs.obs_properties_add_float_slider(props, "refresh_interval", "Refresh Interval", 0.1, 5, 0.1)
@@ -139,6 +157,7 @@ def script_properties():
 def script_defaults(settings):
 	obs.obs_data_set_default_int(settings, "slide_visible_duration", slide_visible_duration)
 	obs.obs_data_set_default_double(settings, "refresh_interval", refresh_interval)
+	obs.obs_data_set_default_int(settings, "camera_blur", camera_blur)
 
 def script_update(settings):
 	global monitors
@@ -174,6 +193,12 @@ def script_update(settings):
 
 	global screen_source
 	screen_source = obs.obs_data_get_string(settings, "screen_source")
+
+	global camera_source
+	camera_source = obs.obs_data_get_string(settings, "camera_source")
+
+	global camera_blur
+	camera_blur = obs.obs_data_get_int(settings, "camera_blur")
 
 	global slide_visible_duration
 	slide_visible_duration = obs.obs_data_get_int(settings, "slide_visible_duration")
