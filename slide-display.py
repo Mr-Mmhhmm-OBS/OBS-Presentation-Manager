@@ -4,7 +4,7 @@ from PIL import ImageGrab
 import time
 import continuous_threading
 
-version = "1.5"
+version = "1.6"
 
 monitors = []
 monitor = None
@@ -25,13 +25,40 @@ slide_visible_duration = 10
 refresh_interval = 0.1
 periodic_thread = None
 
-def update_opacity(source_name, value):
+fadeout_duration = 0.25
+fadeout_timestamp = 0
+
+key_1 = '{"slide-display.hotkey": [ { "key": "OBS_KEY_1" } ]}'
+def hotkey_callback(pressed):
+	global holding_hotkey
+	holding_hotkey = pressed
+	if pressed:
+		update_opacity(100)
+	else:
+		fadeout()
+default_hotkeys = [ { 'id':'slide-display.hotkey', 'des':'Show Slide', 'callback': hotkey_callback } ]
+holding_hotkey = False
+
+DEFAULT_STATUS = 0
+BLACK_STATUS = 1
+NEWSLIDE_STATUS = 2
+status = DEFAULT_STATUS
+
+def update_opacity(value):
 	global screen_visible
-	
+	global timestamp
+	global status
+	status = DEFAULT_STATUS
+
+	value = int(value)
+
 	screen_visible = (value == 100)
+	if screen_visible:
+		obs.timer_remove(fadeout_callback)
+	timestamp = time.time() if screen_visible else 0
 
 	update_filter(screen_source, "Color Correction", "opacity", value)
-	update_filter(camera_source, "Blur", "Filter.Blur.Size", camera_blur if screen_visible else 1)
+	update_filter(camera_source, "Blur", "Filter.Blur.Size", int(((value + 1) / 100) * camera_blur))
 
 def update_filter(source_name, filter_name, filter_field_name, value):
 	source = obs.obs_get_source_by_name(source_name)
@@ -50,43 +77,66 @@ def update_filter(source_name, filter_name, filter_field_name, value):
 			obs.obs_source_release(filter)
 		obs.obs_source_release(source)
 
-def update():
+def fadeout_callback():
+	if time.time() <= fadeout_timestamp + fadeout_duration:
+		update_opacity(((time.time() - fadeout_timestamp) / fadeout_duration * -100) + 100)
+	else:
+		update_opacity(0)
+		obs.remove_current_callback()
+
+def fadeout():
+	global fadeout_timestamp
+	global status
+	status = DEFAULT_STATUS
+
+	fadeout_timestamp = time.time()
+	obs.timer_add(fadeout_callback, 50)
+
+def update_backend():
 	global previous_image
-	global timestamp
+	global status
 
 	im = ImageGrab.grab(monitors[monitor].pyRect, False, True, None)
 
 	if im != previous_image:
 		previous_image = im
 		if im.convert("L").getextrema() == (0,0):
-			update_opacity(screen_source, 0)
-		elif not screen_visible:
-			update_opacity(screen_source, 100)
-			timestamp = time.time()
-	elif time.time() >= timestamp + slide_visible_duration and screen_visible:
-			update_opacity(screen_source, 0)
+			status = BLACK_STATUS
+		else:
+			status = NEWSLIDE_STATUS
+
+def update_ui():
+	if status == BLACK_STATUS:
+		update_opacity(0)
+	elif status == NEWSLIDE_STATUS:
+		update_opacity(100)
+	elif time.time() >= timestamp + slide_visible_duration and screen_visible and not holding_hotkey:
+		fadeout()
 
 def activate_timer():
 	global active
 	global previous_image
-	global timestamp
 	global periodic_thread
 
-	timestamp = time.time()
-	update_opacity(screen_source, 100)
+	update_opacity(0)
 	active = True
 	previous_image = None
-	periodic_thread = continuous_threading.PeriodicThread(0.1, update)
+	obs.timer_add(update_ui, int(refresh_interval * 1000))
+	periodic_thread = continuous_threading.PeriodicThread(refresh_interval, update_backend)
 	periodic_thread.start()
 	
 
 def deactivate_timer():
+	global periodic_thread
 	global active
 
 	if periodic_thread != None:
-		periodic_thread.join()
+		periodic_thread.stop()
+		periodic_thread = None
 
-	update_opacity(screen_source, 100)
+	obs.timer_remove(update_ui)
+
+	update_opacity(0)
 	active = False
 
 def get_current_scene_name():
@@ -96,6 +146,8 @@ def get_current_scene_name():
 	return scene_name
 
 def on_event(event):
+	if event == obs.OBS_FRONTEND_EVENT_FINISHED_LOADING:
+		update_opacity(0)
 	if (event == obs.OBS_FRONTEND_EVENT_STREAMING_STARTED or event == obs.OBS_FRONTEND_EVENT_RECORDING_STARTED) and get_current_scene_name() in slide_scenes and not active:
 		if get_current_scene_name() in slide_scenes:
 			if not active:
@@ -148,14 +200,17 @@ def script_properties():
 
 	obs.obs_properties_add_int_slider(props, "camera_blur", "Camera Blur", 1, 127, camera_blur)
 
-	obs.obs_properties_add_int_slider(props, "slide_visible_duration", "Slide Visible Duration", 5, 120, 5)
+	obs.obs_properties_add_int_slider(props, "slide_visible_duration", "Slide Visible Duration", 5, 120, 5)	
+
+	obs.obs_properties_add_float_slider(props, "fadeout_duration", "Fade Out Duration", 0.05, 1.25, 0.05)
 
 	obs.obs_properties_add_float_slider(props, "refresh_interval", "Refresh Interval", 0.1, 5, 0.1)
 
 	return props
 
 def script_defaults(settings):
-	obs.obs_data_set_default_int(settings, "slide_visible_duration", slide_visible_duration)
+	obs.obs_data_set_default_int(settings, "slide_visible_duration", slide_visible_duration)	
+	obs.obs_data_set_default_double(settings, "fadeout_duration", fadeout_duration)
 	obs.obs_data_set_default_double(settings, "refresh_interval", refresh_interval)
 	obs.obs_data_set_default_int(settings, "camera_blur", camera_blur)
 
@@ -203,12 +258,24 @@ def script_update(settings):
 	global slide_visible_duration
 	slide_visible_duration = obs.obs_data_get_int(settings, "slide_visible_duration")
 
+	global fadeout_duration
+	fadeout_duration = obs.obs_data_get_double(settings, "fadeout_duration")
+
 	global refresh_interval
 	refresh_interval = obs.obs_data_get_double(settings, "refresh_interval")
 	
 	deactivate_timer()
 
 	obs.obs_frontend_add_event_callback(on_event)
+
+def script_load(settings):
+	s = obs.obs_data_create_from_json(key_1)
+	for v in default_hotkeys:
+		a = obs.obs_data_get_array(s, v['id'])
+		h = obs.obs_hotkey_register_frontend(v['id'], v['des'], v['callback'])
+		obs.obs_hotkey_load(h, a)
+		obs.obs_data_array_release(a)
+	obs.obs_data_release(s)
 
 class Monitor(object):
 	def __init__(self, hMonitor, hdcMonitor, pyRect, szDevice):
