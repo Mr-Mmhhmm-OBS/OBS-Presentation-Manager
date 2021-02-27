@@ -4,7 +4,7 @@ from PIL import ImageGrab
 import time
 import continuous_threading
 
-version = "1.6"
+version = "1.7"
 
 monitors = []
 monitor = None
@@ -28,7 +28,9 @@ periodic_thread = None
 fadeout_duration = 0.25
 fadeout_timestamp = 0
 
-key_1 = '{"slide-display.hotkey": [ { "key": "OBS_KEY_1" } ]}'
+hotkey = obs.OBS_INVALID_HOTKEY_ID
+holding_hotkey = False
+
 def hotkey_callback(pressed):
 	global holding_hotkey
 	holding_hotkey = pressed
@@ -36,8 +38,6 @@ def hotkey_callback(pressed):
 		update_opacity(100)
 	else:
 		fadeout()
-default_hotkeys = [ { 'id':'slide-display.hotkey', 'des':'Show Slide', 'callback': hotkey_callback } ]
-holding_hotkey = False
 
 DEFAULT_STATUS = 0
 BLACK_STATUS = 1
@@ -269,13 +269,16 @@ def script_update(settings):
 	obs.obs_frontend_add_event_callback(on_event)
 
 def script_load(settings):
-	s = obs.obs_data_create_from_json(key_1)
-	for v in default_hotkeys:
-		a = obs.obs_data_get_array(s, v['id'])
-		h = obs.obs_hotkey_register_frontend(v['id'], v['des'], v['callback'])
-		obs.obs_hotkey_load(h, a)
-		obs.obs_data_array_release(a)
-	obs.obs_data_release(s)
+	global hotkey
+	hotkey = obs.obs_hotkey_register_frontend("SlideDisplay.hotkey.show", "Show Slide-Display (hold)", hotkey_callback)
+	hotkey_save_array = obs.obs_data_get_array(settings, "SlideDisplay.hotkey.show")
+	obs.obs_hotkey_load(hotkey, hotkey_save_array)
+	obs.obs_data_array_release(hotkey_save_array)
+
+def script_save(settings):
+	hotkey_save_array = obs.obs_hotkey_save(hotkey)
+	obs.obs_data_set_array(settings, "SlideDisplay.hotkey.show", hotkey_save_array)
+	obs.obs_data_array_release(hotkey_save_array)
 
 class Monitor(object):
 	def __init__(self, hMonitor, hdcMonitor, pyRect, szDevice):
