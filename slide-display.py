@@ -114,7 +114,7 @@ def fadeout():
 	status = DEFAULT_STATUS
 
 	fadeout_timestamp = time.time()
-	obs.timer_add(fadeout_callback, 50)
+	obs.timer_add(fadeout_callback, 10)
 
 def update_backend():
 	global previous_image
