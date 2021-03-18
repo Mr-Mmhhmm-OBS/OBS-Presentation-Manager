@@ -5,7 +5,7 @@ from PIL import ImageGrab
 import time
 import continuous_threading
 
-version = "1.8"
+version = "1.9"
 
 g = lambda: ...
 g.settings = None
@@ -102,6 +102,7 @@ def get_filter_value(source_name, filter_name, filter_field_name):
 	return value
 
 def fadeout_callback():
+	print("fadeout callback")
 	if time.time() <= fadeout_timestamp + fadeout_duration:
 		update_opacity(((time.time() - fadeout_timestamp) / fadeout_duration * -100) + 100)
 	else:
@@ -109,10 +110,12 @@ def fadeout_callback():
 		obs.timer_remove(fadeout_callback)
 
 def fadeout():
+	print("fadeout")
 	global fadeout_timestamp
 	global status
 	status = DEFAULT_STATUS
 
+	obs.timer_remove(fadeout_callback)
 	fadeout_timestamp = time.time()
 	obs.timer_add(fadeout_callback, 50)
 
@@ -142,9 +145,11 @@ def activate_timer():
 	global previous_image
 	global periodic_thread
 
-	update_opacity(100)
+
 	active = True
+	update_opacity(100)
 	previous_image = None
+	obs.timer_remove(update_ui)
 	obs.timer_add(update_ui, int(refresh_interval * 1000))
 	periodic_thread = continuous_threading.PeriodicThread(refresh_interval, update_backend)
 	periodic_thread.start()
@@ -174,9 +179,7 @@ def SetDefaultFilterValues():
 
 def on_event(event):
 	if (event == obs.OBS_FRONTEND_EVENT_STREAMING_STARTED or event == obs.OBS_FRONTEND_EVENT_RECORDING_STARTED) and get_current_scene_name() in slide_scenes and not active:
-		if get_current_scene_name() in slide_scenes:
-			if not active:
-				activate_timer()
+		activate_timer()
 	elif event == obs.OBS_FRONTEND_EVENT_SCENE_CHANGED:
 		if get_current_scene_name() in slide_scenes:
 			if obs.obs_frontend_streaming_active() or obs.obs_frontend_recording_active():
@@ -188,7 +191,7 @@ def on_event(event):
 			if active:
 				deactivate_timer()
 			SetDefaultFilterValues()
-	elif (event == obs.OBS_FRONTEND_EVENT_STREAMING_STOPPED or event == obs.OBS_FRONTEND_EVENT_RECORDING_STOPPED) and active:
+	elif (event == obs.OBS_FRONTEND_EVENT_STREAMING_STOPPED or event == obs.OBS_FRONTEND_EVENT_RECORDING_STOPPED) and not obs.obs_frontend_streaming_active() and not obs.obs_frontend_recording_active() and active:
 		deactivate_timer()
 
 def script_description():
