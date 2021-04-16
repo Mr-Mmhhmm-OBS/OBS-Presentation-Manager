@@ -4,8 +4,9 @@ import win32api
 from PIL import ImageGrab
 import time
 import continuous_threading
+import random
 
-version = "1.9"
+version = "2.0"
 
 g = lambda: ...
 g.settings = None
@@ -16,9 +17,13 @@ monitor = None
 slide_scenes = []
 active = False
 
-filters = []
+screen_sourcename = ""
+cameras = []
+active_camera = 0
+max_blur = 25
 
 screen_visible = True
+camera_locked = True
 
 previous_image = []
 timestamp = 0
@@ -50,8 +55,10 @@ status = DEFAULT_STATUS
 
 def update_opacity(value):
 	global screen_visible
+	global camera_locked
 	global timestamp
 	global status
+
 	status = DEFAULT_STATUS
 
 	value = int(value)
@@ -60,10 +67,10 @@ def update_opacity(value):
 	if screen_visible:
 		obs.timer_remove(fadeout_callback)
 	timestamp = time.time() if screen_visible else 0
+	camera_locked = (value != 0)
 
-	for filter in filters:
-		if filter.source_name != "":
-			set_filter_value(filter.source_name, filter.filter_name, filter.filterfield_name, int((filter.on_value - filter.off_value) * (value / 100) + filter.off_value))
+	set_filter_value(screen_sourcename, "Color Correction", "opacity", value)
+	cameras[active_camera].SetBlur(value)
 
 def set_filter_value(source_name, filter_name, filter_field_name, value):
 	source = obs.obs_get_source_by_name(source_name)
@@ -102,7 +109,6 @@ def get_filter_value(source_name, filter_name, filter_field_name):
 	return value
 
 def fadeout_callback():
-	print("fadeout callback")
 	if time.time() <= fadeout_timestamp + fadeout_duration:
 		update_opacity(((time.time() - fadeout_timestamp) / fadeout_duration * -100) + 100)
 	else:
@@ -110,7 +116,6 @@ def fadeout_callback():
 		obs.timer_remove(fadeout_callback)
 
 def fadeout():
-	print("fadeout")
 	global fadeout_timestamp
 	global status
 	status = DEFAULT_STATUS
@@ -133,6 +138,8 @@ def update_backend():
 			status = NEWSLIDE_STATUS
 
 def update_ui():
+	global active_camera
+
 	if status == BLACK_STATUS:
 		update_opacity(0)
 	elif status == NEWSLIDE_STATUS:
@@ -140,13 +147,22 @@ def update_ui():
 	elif time.time() >= timestamp + slide_visible_duration and screen_visible and not holding_hotkey:
 		fadeout()
 
+	if not camera_locked and len(cameras) > 1 and cameras[active_camera].IsExpired():
+		cameras[active_camera].Hide()
+		if active_camera == 0:
+			active_camera = random.randrange(1, len(cameras))
+		else:
+			active_camera = 0
+		cameras[active_camera].Show()
+
 def activate_timer():
 	global active
 	global previous_image
 	global periodic_thread
-
+	global active_camera
 
 	active = True
+	active_camera = 0
 	update_opacity(100)
 	previous_image = None
 	obs.timer_remove(update_ui)
@@ -173,9 +189,9 @@ def get_current_scene_name():
 	return scene_name
 
 def SetDefaultFilterValues():
-	for filter in filters:
-		if filter.source_name != "":
-			set_filter_value(filter.source_name, filter.filter_name, filter.filterfield_name, filter.default_value)
+	set_filter_value(screen_sourcename, "Color Correction", "opacity", 100)
+	for camera in cameras:
+		camera.SetBlur(0)
 
 def on_event(event):
 	if (event == obs.OBS_FRONTEND_EVENT_STREAMING_STARTED or event == obs.OBS_FRONTEND_EVENT_RECORDING_STARTED) and get_current_scene_name() in slide_scenes and not active:
@@ -197,99 +213,76 @@ def on_event(event):
 def script_description():
 	return "An OBS script to toggle the visiblility of a source for the purposes of a slide presentation.\nv" + version
 
-def update_filter_data(i, source_name, filter_name, fitlerfield_name, default_value, off_value, on_value):
-	obs.obs_data_set_string(g.settings, "filter"+str(i)+"_sourcename", source_name)
-	obs.obs_data_set_string(g.settings, "filter"+str(i)+"_filtername", filter_name)
-	obs.obs_data_set_string(g.settings, "filter"+str(i)+"_filterfieldname", fitlerfield_name)
-	obs.obs_data_set_int(g.settings, "filter"+str(i)+"_defaultvalue", default_value)
-	obs.obs_data_set_int(g.settings, "filter"+str(i)+"_offvalue", off_value)
-	obs.obs_data_set_int(g.settings, "filter"+str(i)+"_onvalue", on_value)
+def update_camera_data(i, source_name, min_visible_duration, max_visible_duration):
+	obs.obs_data_set_string(g.settings, "camera"+str(i)+"_sourcename", source_name)
+	obs.obs_data_set_int(g.settings, "camera"+str(i)+"_minvisibleduration", min_visible_duration)
+	obs.obs_data_set_int(g.settings, "camera"+str(i)+"_maxvisibleduration", max_visible_duration)
 
-def erase_filter_data(i):
-	obs.obs_data_erase(g.settings, "filter"+str(i)+"_sourcename")
-	obs.obs_data_erase(g.settings, "filter"+str(i)+"_filtername")
-	obs.obs_data_erase(g.settings, "filter"+str(i)+"_filterfieldname")
-	obs.obs_data_erase(g.settings, "filter"+str(i)+"_defaultvalue")
-	obs.obs_data_erase(g.settings, "filter"+str(i)+"_offvalue")
-	obs.obs_data_erase(g.settings, "filter"+str(i)+"_onvalue")
+def erase_camera_data(i):
+	obs.obs_data_erase(g.settings, "camera"+str(i)+"_sourcename")
+	obs.obs_data_erase(g.settings, "camera"+str(i)+"_minvisibleduration")
+	obs.obs_data_erase(g.settings, "camera"+str(i)+"_maxvisibleduration")
 
 
-def addfilter_callback(props, property):
-	i = len(filters)
-	update_filter_data(i, "", "", "", 0, 0 ,0)
-	filters.append(OBS_Filter("", "", "", 0, 0, 0))
-	obs.obs_data_set_int(g.settings, "filters", len(filters))
+def addcamera_callback(props, property):
+	i = len(cameras)
+	update_camera_data(i, "", 0, 0)
+	cameras.append(Camera("", 0, 0))
+	obs.obs_data_set_int(g.settings, "cameras", len(cameras))
 	
-	group = obs.obs_properties_get(props, "filter"+str(i)+"_group")
+	group = obs.obs_properties_get(props, "camera"+str(i)+"_group")
 	if group is None:
-		add_filter_group(obs.obs_property_group_content(obs.obs_properties_get(props, "filter_groups")), i)
+		add_camera_group(obs.obs_property_group_content(obs.obs_properties_get(props, "camera_groups")), i)
 	else:
 		obs.obs_property_set_visible(group, True)
 	return True
 
-def removefilter_callback(props, property):
-	i = int(obs.obs_property_name(property).split('_')[0].split('filter')[1])
+def removecamera_callback(props, property):
+	i = int(obs.obs_property_name(property).split('_')[0].split('camera')[1])
 
-	if (i < len(filters)):
-		filters.pop(i)
-		erase_filter_data(len(filters))
-		obs.obs_property_set_visible(obs.obs_properties_get(props, "filter"+str(len(filters))+"_group"), False)
-		obs.obs_data_set_int(g.settings, "filters", len(filters))
-		for i2 in range(i, len(filters)):
-			update_filter_data(i2, filters[i2].source_name, filters[i2].filter_name, filters[i2].filterfield_name, filters[i2].default_value, filters[i2].off_value, filters[i2].on_value)
+	if (i < len(cameras)):
+		cameras.pop(i)
+		erase_camera_data(len(cameras))
+		obs.obs_property_set_visible(obs.obs_properties_get(props, "camera"+str(len(cameras))+"_group"), False)
+		obs.obs_data_set_int(g.settings, "cameras", len(cameras))
+		for i2 in range(i, len(cameras)):
+			update_camera_data(i2, cameras[i2].source_name, cameras[i2].min_visible_duration, cameras[i2].max_visible_duration)
 	return True
 
-def filter_sourcename_modified_callback(props, property, settings):
-	index = int(obs.obs_property_name(property).split('_')[0].split('filter')[1])
-	filters[index].source_name = obs.obs_data_get_string(settings, "filter"+str(index)+"_sourcename")
+def camera_sourcename_modified_callback(props, property, settings):
+	index = int(obs.obs_property_name(property).split('_')[0].split('camera')[1])
+	cameras[index].source_name = obs.obs_data_get_string(settings, "camera"+str(index)+"_sourcename")
 
-def filter_filtername_modified_callback(props, property, settings):
-	index = int(obs.obs_property_name(property).split('_')[0].split('filter')[1])
-	filters[index].filter_name = obs.obs_data_get_string(settings, "filter"+str(index)+"_filtername")
+def camera_minvisibleduration_modified_callback(props, property, settings):
+	index = int(obs.obs_property_name(property).split('_')[0].split('camera')[1])
+	cameras[index].min_visible_duration = obs.obs_data_get_int(settings, "camera"+str(index)+"_minvisibleduration")
 
-def filter_filterfieldname_modified_callback(props, property, settings):
-	index = int(obs.obs_property_name(property).split('_')[0].split('filter')[1])
-	filters[index].filterfield_name = obs.obs_data_get_string(settings, "filter"+str(index)+"_filterfieldname")
+def camera_maxvisibleduration_modified_callback(props, property, settings):
+	index = int(obs.obs_property_name(property).split('_')[0].split('camera')[1])
+	cameras[index].max_visible_duration = obs.obs_data_get_int(settings, "camera"+str(index)+"_maxvisibleduration")
 
-def filter_defaultvalue_modified_callback(props, property, settings):
-	index = int(obs.obs_property_name(property).split('_')[0].split('filter')[1])
-	filters[index].default_value = obs.obs_data_get_int(settings, "filter"+str(index)+"_defaltvalue")
+def add_camera_group(camera_groups, i):
+	camera_group = obs.obs_properties_create()
 
-def filter_offvalue_modified_callback(props, property, settings):
-	index = int(obs.obs_property_name(property).split('_')[0].split('filter')[1])
-	filters[index].off_value = obs.obs_data_get_int(settings, "filter"+str(index)+"_offvalue")
-
-def filter_onvalue_modified_callback(props, property, settings):
-	index = int(obs.obs_property_name(property).split('_')[0].split('filter')[1])
-	filters[index].on_value = obs.obs_data_get_int(settings, "filter"+str(index)+"_onvalue")
-
-def add_filter_group(filter_groups, i):
-	filter_group = obs.obs_properties_create()
-
-	prop = obs.obs_properties_add_list(filter_group, "filter"+str(i)+"_sourcename", "Source", obs.OBS_COMBO_TYPE_LIST, obs.OBS_COMBO_FORMAT_STRING)
-	obs.obs_property_set_modified_callback(prop, filter_sourcename_modified_callback)
-	obs.obs_property_list_add_string(prop, "--Disabled--", "")
+	p = obs.obs_properties_add_list(camera_group, "camera"+str(i)+"_sourcename", "Source", obs.OBS_COMBO_TYPE_LIST, obs.OBS_COMBO_FORMAT_STRING)
+	obs.obs_property_set_modified_callback(p, camera_sourcename_modified_callback)
+	obs.obs_property_list_add_string(p, "--Disabled--", "")
 	sources = obs.obs_enum_sources()
 	if sources != None:
 		for source in sources:
 			name = obs.obs_source_get_name(source)
-			obs.obs_property_list_add_string(prop, name, name)
+			obs.obs_property_list_add_string(p, name, name)
 	obs.source_list_release(sources)
-
-	prop = obs.obs_properties_add_text(filter_group, "filter"+str(i)+"_filtername", "Filter Name", obs.OBS_TEXT_DEFAULT)
-	obs.obs_property_set_modified_callback(prop, filter_filtername_modified_callback)
-	prop = obs.obs_properties_add_text(filter_group, "filter"+str(i)+"_filterfieldname", "Filter Field Name", obs.OBS_TEXT_DEFAULT)
-	obs.obs_property_set_modified_callback(prop, filter_filterfieldname_modified_callback)
-	prop = obs.obs_properties_add_int(filter_group, "filter"+str(i)+"_defaultvalue", "Default Value", -256, 256, 1)
-	obs.obs_property_set_modified_callback(prop, filter_defaultvalue_modified_callback)
-	prop = obs.obs_properties_add_int(filter_group, "filter"+str(i)+"_offvalue", "Off Value", -256, 256, 1)
-	obs.obs_property_set_modified_callback(prop, filter_offvalue_modified_callback)
-	prop = obs.obs_properties_add_int(filter_group, "filter"+str(i)+"_onvalue", "On Value", -256, 256, 1)
-	obs.obs_property_set_modified_callback(prop, filter_onvalue_modified_callback)
 	
-	obs.obs_properties_add_button(filter_group, "filter"+str(i)+"_removefilter", "Remove Filter", removefilter_callback)
+	p = obs.obs_properties_add_int_slider(camera_group, "camera"+str(i)+"_minvisibleduration", "Min Visible Duration", 1, 1800, 1)
+	obs.obs_property_set_modified_callback(p, camera_minvisibleduration_modified_callback)
 
-	obs.obs_properties_add_group(filter_groups, "filter"+str(i)+"_group", "Filter #"+str(i+1), obs.OBS_GROUP_NORMAL, filter_group)
+	p = obs.obs_properties_add_int_slider(camera_group, "camera"+str(i)+"_maxvisibleduration", "Max Visible Duration", 1, 1800, 1)
+	obs.obs_property_set_modified_callback(p, camera_maxvisibleduration_modified_callback)
+	
+	obs.obs_properties_add_button(camera_group, "camera"+str(i)+"_removecamera", "Remove Camera", removecamera_callback)
+
+	obs.obs_properties_add_group(camera_groups, "camera"+str(i)+"_group", "Primary Camera" if i == 0 else "Camera #"+str(i+1), obs.OBS_GROUP_NORMAL, camera_group)
 
 def script_properties():
 	props = obs.obs_properties_create()
@@ -297,6 +290,15 @@ def script_properties():
 	p = obs.obs_properties_add_list(props, "monitor", "Monitor", obs.OBS_COMBO_TYPE_LIST, obs.OBS_COMBO_FORMAT_INT)
 	for i, monitor in enumerate(monitors):
 		obs.obs_property_list_add_int(p, str(monitor.szDevice), i)
+
+	p = obs.obs_properties_add_list(props, "screen_sourcename", "Screen Source", obs.OBS_COMBO_TYPE_LIST, obs.OBS_COMBO_FORMAT_STRING)
+	obs.obs_property_list_add_string(p, "--Disabled--", "")
+	sources = obs.obs_enum_sources()
+	if sources != None:
+		for source in sources:
+			name = obs.obs_source_get_name(source)
+			obs.obs_property_list_add_string(p, name, name)
+	obs.source_list_release(sources)
 
 	group = obs.obs_properties_create()
 	scene_names = obs.obs_frontend_get_scene_names()
@@ -311,18 +313,20 @@ def script_properties():
 
 	obs.obs_properties_add_float_slider(props, "refresh_interval", "Refresh Interval", 0.1, 5, 0.1)
 
-	filter_groups = obs.obs_properties_create()
-	for i, filter in enumerate(filters):
-		add_filter_group(filter_groups, i)
-	obs.obs_properties_add_group(props, "filter_groups", "Filters", obs.OBS_GROUP_NORMAL, filter_groups)
-	obs.obs_properties_add_button(props, "add_filter", "Add Filter", addfilter_callback)
+	obs.obs_properties_add_int_slider(props, "max_blur", "Max Blur", 1, 128, 1)
 
+	camera_groups = obs.obs_properties_create()
+	for i in range(len(cameras)):
+		add_camera_group(camera_groups, i)
+	obs.obs_properties_add_group(props, "camera_groups", "Cameras", obs.OBS_GROUP_NORMAL, camera_groups)
+	obs.obs_properties_add_button(props, "add_camera", "Add Camera", addcamera_callback)
 	return props
 
 def script_defaults(settings):
-	obs.obs_data_set_default_int(settings, "slide_visible_duration", slide_visible_duration)	
+	obs.obs_data_set_default_int(settings, "slide_visible_duration", slide_visible_duration)
 	obs.obs_data_set_default_double(settings, "fadeout_duration", fadeout_duration)
 	obs.obs_data_set_default_double(settings, "refresh_interval", refresh_interval)
+	obs.obs_data_set_default_int(settings, "max_blur", max_blur)
 
 def script_update(settings):	
 	global g
@@ -336,6 +340,8 @@ def script_update(settings):
 	global monitor
 	monitor = obs.obs_data_get_int(settings, "monitor")
 
+	global screen_sourcename
+	screen_sourcename = obs.obs_data_get_string(settings, "screen_sourcename")
 
 	scene_names = obs.obs_frontend_get_scene_names()
 	if scene_names != None and len(scene_names) > 0:
@@ -368,16 +374,13 @@ def script_update(settings):
 	global refresh_interval
 	refresh_interval = obs.obs_data_get_double(settings, "refresh_interval")	
 
-	global filters
-	filters.clear()
-	for i in range(obs.obs_data_get_int(settings, "filters")):
-		filters.append(OBS_Filter(obs.obs_data_get_string(settings, "filter"+str(i)+"_sourcename"), 
-			obs.obs_data_get_string(settings, "filter"+str(i)+"_filtername"), 
-			obs.obs_data_get_string(settings, "filter"+str(i)+"_filterfieldname"), 
-			obs.obs_data_get_int(settings, "filter"+str(i)+"_defaultvalue"), 
-			obs.obs_data_get_int(settings, "filter"+str(i)+"_offvalue"), 
-			obs.obs_data_get_int(settings, "filter"+str(i)+"_onvalue"))
-		)
+	cameras.clear()
+	for i in range(obs.obs_data_get_int(settings, "cameras")):
+		cameras.append(Camera(
+			obs.obs_data_get_string(settings, "camera"+str(i)+"_sourcename"),
+			obs.obs_data_get_int(settings, "camera"+str(i)+"_minvisibleduration"),
+			obs.obs_data_get_int(settings, "camera"+str(i)+"_maxvisibleduration")
+		))
 
 def script_load(settings):
 	global hotkey
@@ -416,14 +419,27 @@ class Monitor(object):
 	def height(self):
 		return self.pyRect[3] - self.pyRect[1]
 
-class OBS_Filter(object):
-	def __init__(self, source_name, filter_name, filterfield_name, default_value, off_value, on_value):
+class Camera(object):
+	def __init__(self, source_name, min_visible_duration, max_visible_duration):
 		self.source_name = source_name
-		self.filter_name = filter_name
-		self.filterfield_name = filterfield_name
-		self.default_value = default_value
-		self.off_value = off_value
-		self.on_value = on_value
+		self.min_visible_duration = min_visible_duration
+		self.max_visible_duration = max_visible_duration
+		self.expiry = 0
 
 	def __str__(self):
 		return self.source_name
+
+	def SetBlur(self, value):
+		set_filter_value(self.source_name, "Blur", "Filter.Blur.Size", int(max_blur * (value / 100)))
+		if value == 0:
+			self.expiry = time.time() + self.min_visible_duration
+
+	def Show(self):
+		self.expiry = time.time() + random.randint(self.min_visible_duration, self.max_visible_duration)
+		set_filter_value(self.source_name, "Color Correction", "opacity", 100)
+
+	def Hide(self):
+		set_filter_value(self.source_name, "Color Correction", "opacity", 0)
+
+	def IsExpired(self):
+		return time.time() > self.expiry
