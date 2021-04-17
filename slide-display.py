@@ -6,7 +6,7 @@ import time
 import continuous_threading
 import random
 
-version = "2.0"
+version = "2.1"
 
 g = lambda: ...
 g.settings = None
@@ -14,13 +14,13 @@ g.settings = None
 monitors = []
 monitor = None
 
-slide_scenes = []
+slide_scene = ""
 active = False
 
 screen_sourcename = ""
 cameras = []
 active_camera = 0
-max_blur = 25
+camera_blur = 25
 
 screen_visible = True
 camera_locked = True
@@ -162,7 +162,12 @@ def activate_timer():
 	global active_camera
 
 	active = True
+
 	active_camera = 0
+	for camera in cameras:
+		camera.Hide()
+	cameras[active_camera].Show()
+
 	update_opacity(100)
 	previous_image = None
 	obs.timer_remove(update_ui)
@@ -185,28 +190,27 @@ def deactivate_timer():
 def get_current_scene_name():
 	scene = obs.obs_frontend_get_current_scene()
 	scene_name = obs.obs_source_get_name(scene)
-	obs.obs_source_release(scene);
+	obs.obs_source_release(scene)
 	return scene_name
 
-def SetDefaultFilterValues():
-	set_filter_value(screen_sourcename, "Color Correction", "opacity", 100)
-	for camera in cameras:
-		camera.SetBlur(0)
-
 def on_event(event):
-	if (event == obs.OBS_FRONTEND_EVENT_STREAMING_STARTED or event == obs.OBS_FRONTEND_EVENT_RECORDING_STARTED) and get_current_scene_name() in slide_scenes and not active:
+	if (event == obs.OBS_FRONTEND_EVENT_STREAMING_STARTED or event == obs.OBS_FRONTEND_EVENT_RECORDING_STARTED) and get_current_scene_name() == slide_scene and not active:
 		activate_timer()
 	elif event == obs.OBS_FRONTEND_EVENT_SCENE_CHANGED:
-		if get_current_scene_name() in slide_scenes:
+		if get_current_scene_name() == slide_scene:
 			if obs.obs_frontend_streaming_active() or obs.obs_frontend_recording_active():
 				if not active:
 					activate_timer()
 			else:
-				SetDefaultFilterValues()
+				set_filter_value(screen_sourcename, "Color Correction", "opacity", 100)
+				for camera in cameras:
+					camera.SetBlur(0)
 		else:
 			if active:
 				deactivate_timer()
-			SetDefaultFilterValues()
+			set_filter_value(screen_sourcename, "Color Correction", "opacity", 100)
+			for camera in cameras:
+				camera.SetBlur(0)
 	elif (event == obs.OBS_FRONTEND_EVENT_STREAMING_STOPPED or event == obs.OBS_FRONTEND_EVENT_RECORDING_STOPPED) and not obs.obs_frontend_streaming_active() and not obs.obs_frontend_recording_active() and active:
 		deactivate_timer()
 
@@ -287,6 +291,13 @@ def add_camera_group(camera_groups, i):
 def script_properties():
 	props = obs.obs_properties_create()
 
+	p = obs.obs_properties_add_list(props, "slide_scene", "Slide Scene", obs.OBS_COMBO_TYPE_LIST, obs.OBS_COMBO_FORMAT_STRING)
+	obs.obs_property_list_add_string(p, "--Disabled--", "")
+	scene_names = obs.obs_frontend_get_scene_names()
+	if scene_names != None:
+		for scene_name in scene_names:
+			obs.obs_property_list_add_string(p, scene_name, scene_name)
+
 	p = obs.obs_properties_add_list(props, "monitor", "Monitor", obs.OBS_COMBO_TYPE_LIST, obs.OBS_COMBO_FORMAT_INT)
 	for i, monitor in enumerate(monitors):
 		obs.obs_property_list_add_int(p, str(monitor.szDevice), i)
@@ -300,20 +311,13 @@ def script_properties():
 			obs.obs_property_list_add_string(p, name, name)
 	obs.source_list_release(sources)
 
-	group = obs.obs_properties_create()
-	scene_names = obs.obs_frontend_get_scene_names()
-	if scene_names != None:
-		for scene_name in scene_names:
-			obs.obs_properties_add_bool(group, "slide_scene_" + str(scene_name), scene_name)
-	obs.obs_properties_add_group(props, "slide_scenes", "Slide Scenes", obs.OBS_GROUP_NORMAL, group)
-
 	obs.obs_properties_add_int_slider(props, "slide_visible_duration", "Slide Visible Duration", 5, 120, 5)	
 
 	obs.obs_properties_add_float_slider(props, "fadeout_duration", "Fade Out Duration", 0.05, 1.25, 0.05)
 
 	obs.obs_properties_add_float_slider(props, "refresh_interval", "Refresh Interval", 0.1, 5, 0.1)
 
-	obs.obs_properties_add_int_slider(props, "max_blur", "Max Blur", 1, 128, 1)
+	obs.obs_properties_add_int_slider(props, "camera_blur", "Camera Blur", 1, 128, 1)
 
 	camera_groups = obs.obs_properties_create()
 	for i in range(len(cameras)):
@@ -326,11 +330,14 @@ def script_defaults(settings):
 	obs.obs_data_set_default_int(settings, "slide_visible_duration", slide_visible_duration)
 	obs.obs_data_set_default_double(settings, "fadeout_duration", fadeout_duration)
 	obs.obs_data_set_default_double(settings, "refresh_interval", refresh_interval)
-	obs.obs_data_set_default_int(settings, "max_blur", max_blur)
+	obs.obs_data_set_default_int(settings, "camera_blur", camera_blur)
 
 def script_update(settings):	
 	global g
 	g.settings = settings
+
+	global slide_scene
+	slide_scene = obs.obs_data_get_string(settings, "slide_scene")
 
 	global monitors
 	monitors = []
@@ -342,28 +349,6 @@ def script_update(settings):
 
 	global screen_sourcename
 	screen_sourcename = obs.obs_data_get_string(settings, "screen_sourcename")
-
-	scene_names = obs.obs_frontend_get_scene_names()
-	if scene_names != None and len(scene_names) > 0:
-		# Update scene_name list
-		array = obs.obs_data_array_create()
-		for i, scene_name in enumerate(scene_names):
-			data_item = obs.obs_data_create()
-			obs.obs_data_set_string(data_item, "scene_name", scene_name)
-			obs.obs_data_array_insert(array, i, data_item)
-		obs.obs_data_set_array(settings, "scene_names", array)
-
-	global slide_scenes
-	slide_scenes = []
-	scene_name_array = obs.obs_data_get_array(settings, "scene_names")
-	if scene_name_array != None:
-		for i in range(obs.obs_data_array_count(scene_name_array)):
-			data_item = obs.obs_data_array_item(scene_name_array, i)
-			scene_name = obs.obs_data_get_string(data_item, "scene_name")
-			checked = obs.obs_data_get_bool(settings, "slide_scene_" + str(scene_name))
-			if checked:
-				slide_scenes.append(scene_name)
-		obs.obs_data_array_release(scene_name_array)
 
 	global slide_visible_duration
 	slide_visible_duration = obs.obs_data_get_int(settings, "slide_visible_duration")
@@ -413,12 +398,6 @@ class Monitor(object):
 	def __hash__(self):
 		return hash(self.hMonitor)
 
-	def width(self):
-		return self.pyRect[2] - self.pyRect[0]
-	
-	def height(self):
-		return self.pyRect[3] - self.pyRect[1]
-
 class Camera(object):
 	def __init__(self, source_name, min_visible_duration, max_visible_duration):
 		self.source_name = source_name
@@ -430,7 +409,7 @@ class Camera(object):
 		return self.source_name
 
 	def SetBlur(self, value):
-		set_filter_value(self.source_name, "Blur", "Filter.Blur.Size", int(max_blur * (value / 100)))
+		set_filter_value(self.source_name, "Blur", "Filter.Blur.Size", int(camera_blur * (value / 100)))
 		if value == 0:
 			self.expiry = time.time() + self.min_visible_duration
 
