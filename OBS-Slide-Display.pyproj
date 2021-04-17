@@ -4,7 +4,7 @@
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>06d06874-5069-429c-92d5-2c9587c03b87</ProjectGuid>
     <ProjectHome>.</ProjectHome>
-    <StartupFile>slide-display.py</StartupFile>
+    <StartupFile>Presentation Manager.py</StartupFile>
     <SearchPath>
     </SearchPath>
     <WorkingDirectory>.</WorkingDirectory>
@@ -22,7 +22,7 @@
     <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="slide-display.py" />
+    <Compile Include="Presentation Manager.py" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="requirements.txt" />
