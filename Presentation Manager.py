@@ -6,7 +6,7 @@ import time
 import continuous_threading
 import random
 
-version = "2.1"
+version = "2.2"
 
 g = lambda: ...
 g.settings = None
@@ -185,6 +185,11 @@ def deactivate_timer():
 		periodic_thread = None
 
 	obs.timer_remove(update_ui)
+
+	set_filter_value(screen_sourcename, "Color Correction", "opacity", 100)
+	for camera in cameras:
+		camera.Show()
+
 	active = False
 
 def get_current_scene_name():
@@ -194,6 +199,7 @@ def get_current_scene_name():
 	return scene_name
 
 def on_event(event):
+	print(str(active))
 	if (event == obs.OBS_FRONTEND_EVENT_STREAMING_STARTED or event == obs.OBS_FRONTEND_EVENT_RECORDING_STARTED) and get_current_scene_name() == slide_scene and not active:
 		activate_timer()
 	elif event == obs.OBS_FRONTEND_EVENT_SCENE_CHANGED:
@@ -205,13 +211,9 @@ def on_event(event):
 				set_filter_value(screen_sourcename, "Color Correction", "opacity", 100)
 				for camera in cameras:
 					camera.SetBlur(0)
-		else:
-			if active:
-				deactivate_timer()
-			set_filter_value(screen_sourcename, "Color Correction", "opacity", 100)
-			for camera in cameras:
-				camera.SetBlur(0)
-	elif (event == obs.OBS_FRONTEND_EVENT_STREAMING_STOPPED or event == obs.OBS_FRONTEND_EVENT_RECORDING_STOPPED) and not obs.obs_frontend_streaming_active() and not obs.obs_frontend_recording_active() and active:
+		elif active:
+			deactivate_timer()
+	elif (event == obs.OBS_FRONTEND_EVENT_STREAMING_STOPPED or event == obs.OBS_FRONTEND_EVENT_RECORDING_STOPPED) and not (obs.obs_frontend_streaming_active() or obs.obs_frontend_recording_active()) and active:
 		deactivate_timer()
 
 def script_description():
@@ -416,6 +418,7 @@ class Camera(object):
 	def Show(self):
 		self.expiry = time.time() + random.randint(self.min_visible_duration, self.max_visible_duration)
 		set_filter_value(self.source_name, "Color Correction", "opacity", 100)
+		self.SetBlur(0)
 
 	def Hide(self):
 		set_filter_value(self.source_name, "Color Correction", "opacity", 0)
