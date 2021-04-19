@@ -199,7 +199,6 @@ def get_current_scene_name():
 	return scene_name
 
 def on_event(event):
-	print(str(active))
 	if (event == obs.OBS_FRONTEND_EVENT_STREAMING_STARTED or event == obs.OBS_FRONTEND_EVENT_RECORDING_STARTED) and get_current_scene_name() == slide_scene and not active:
 		activate_timer()
 	elif event == obs.OBS_FRONTEND_EVENT_SCENE_CHANGED:
