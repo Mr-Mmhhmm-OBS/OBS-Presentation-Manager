@@ -6,7 +6,7 @@ import time
 import continuous_threading
 import random
 
-version = "2.2"
+version = "2.3"
 
 g = lambda: ...
 g.settings = None
@@ -18,8 +18,7 @@ slide_scene = ""
 active = False
 
 screen_sourcename = ""
-cameras = []
-active_camera = 0
+camera_sourcename = ""
 camera_blur = 25
 
 screen_visible = True
@@ -70,7 +69,7 @@ def update_opacity(value):
 	camera_locked = (value != 0)
 
 	set_filter_value(screen_sourcename, "Color Correction", "opacity", value)
-	cameras[active_camera].SetBlur(value)
+	set_filter_value(camera_sourcename, "Blur", "Filter.Blur.Size", int(camera_blur * (value / 100)))
 
 def set_filter_value(source_name, filter_name, filter_field_name, value):
 	source = obs.obs_get_source_by_name(source_name)
@@ -138,7 +137,6 @@ def update_backend():
 			status = NEWSLIDE_STATUS
 
 def update_ui():
-	global active_camera
 
 	if status == BLACK_STATUS:
 		update_opacity(0)
@@ -147,26 +145,12 @@ def update_ui():
 	elif time.time() >= timestamp + slide_visible_duration and screen_visible and not holding_hotkey:
 		fadeout()
 
-	if not camera_locked and len(cameras) > 1 and cameras[active_camera].IsExpired():
-		cameras[active_camera].Hide()
-		if active_camera == 0:
-			active_camera = random.randrange(1, len(cameras))
-		else:
-			active_camera = 0
-		cameras[active_camera].Show()
-
 def activate_timer():
 	global active
 	global previous_image
 	global periodic_thread
-	global active_camera
 
 	active = True
-
-	active_camera = 0
-	for camera in cameras:
-		camera.Hide()
-	cameras[active_camera].Show()
 
 	update_opacity(100)
 	previous_image = None
@@ -187,8 +171,7 @@ def deactivate_timer():
 	obs.timer_remove(update_ui)
 
 	set_filter_value(screen_sourcename, "Color Correction", "opacity", 100)
-	for camera in cameras:
-		camera.Show()
+	set_filter_value(camera_sourcename, "Blur", "Filter.Blur.Size", 0)
 
 	active = False
 
@@ -208,8 +191,7 @@ def on_event(event):
 					activate_timer()
 			else:
 				set_filter_value(screen_sourcename, "Color Correction", "opacity", 100)
-				for camera in cameras:
-					camera.SetBlur(0)
+				set_filter_value(camera_sourcename, "Blur", "Filter.Blur.Size", 0)
 		elif active:
 			deactivate_timer()
 	elif (event == obs.OBS_FRONTEND_EVENT_STREAMING_STOPPED or event == obs.OBS_FRONTEND_EVENT_RECORDING_STOPPED) and not (obs.obs_frontend_streaming_active() or obs.obs_frontend_recording_active()) and active:
@@ -217,77 +199,6 @@ def on_event(event):
 
 def script_description():
 	return "An OBS script to toggle the visiblility of a source for the purposes of a slide presentation.\nv" + version
-
-def update_camera_data(i, source_name, min_visible_duration, max_visible_duration):
-	obs.obs_data_set_string(g.settings, "camera"+str(i)+"_sourcename", source_name)
-	obs.obs_data_set_int(g.settings, "camera"+str(i)+"_minvisibleduration", min_visible_duration)
-	obs.obs_data_set_int(g.settings, "camera"+str(i)+"_maxvisibleduration", max_visible_duration)
-
-def erase_camera_data(i):
-	obs.obs_data_erase(g.settings, "camera"+str(i)+"_sourcename")
-	obs.obs_data_erase(g.settings, "camera"+str(i)+"_minvisibleduration")
-	obs.obs_data_erase(g.settings, "camera"+str(i)+"_maxvisibleduration")
-
-
-def addcamera_callback(props, property):
-	i = len(cameras)
-	update_camera_data(i, "", 0, 0)
-	cameras.append(Camera("", 0, 0))
-	obs.obs_data_set_int(g.settings, "cameras", len(cameras))
-	
-	group = obs.obs_properties_get(props, "camera"+str(i)+"_group")
-	if group is None:
-		add_camera_group(obs.obs_property_group_content(obs.obs_properties_get(props, "camera_groups")), i)
-	else:
-		obs.obs_property_set_visible(group, True)
-	return True
-
-def removecamera_callback(props, property):
-	i = int(obs.obs_property_name(property).split('_')[0].split('camera')[1])
-
-	if (i < len(cameras)):
-		cameras.pop(i)
-		erase_camera_data(len(cameras))
-		obs.obs_property_set_visible(obs.obs_properties_get(props, "camera"+str(len(cameras))+"_group"), False)
-		obs.obs_data_set_int(g.settings, "cameras", len(cameras))
-		for i2 in range(i, len(cameras)):
-			update_camera_data(i2, cameras[i2].source_name, cameras[i2].min_visible_duration, cameras[i2].max_visible_duration)
-	return True
-
-def camera_sourcename_modified_callback(props, property, settings):
-	index = int(obs.obs_property_name(property).split('_')[0].split('camera')[1])
-	cameras[index].source_name = obs.obs_data_get_string(settings, "camera"+str(index)+"_sourcename")
-
-def camera_minvisibleduration_modified_callback(props, property, settings):
-	index = int(obs.obs_property_name(property).split('_')[0].split('camera')[1])
-	cameras[index].min_visible_duration = obs.obs_data_get_int(settings, "camera"+str(index)+"_minvisibleduration")
-
-def camera_maxvisibleduration_modified_callback(props, property, settings):
-	index = int(obs.obs_property_name(property).split('_')[0].split('camera')[1])
-	cameras[index].max_visible_duration = obs.obs_data_get_int(settings, "camera"+str(index)+"_maxvisibleduration")
-
-def add_camera_group(camera_groups, i):
-	camera_group = obs.obs_properties_create()
-
-	p = obs.obs_properties_add_list(camera_group, "camera"+str(i)+"_sourcename", "Source", obs.OBS_COMBO_TYPE_LIST, obs.OBS_COMBO_FORMAT_STRING)
-	obs.obs_property_set_modified_callback(p, camera_sourcename_modified_callback)
-	obs.obs_property_list_add_string(p, "--Disabled--", "")
-	sources = obs.obs_enum_sources()
-	if sources != None:
-		for source in sources:
-			name = obs.obs_source_get_name(source)
-			obs.obs_property_list_add_string(p, name, name)
-	obs.source_list_release(sources)
-	
-	p = obs.obs_properties_add_int_slider(camera_group, "camera"+str(i)+"_minvisibleduration", "Min Visible Duration", 1, 1800, 1)
-	obs.obs_property_set_modified_callback(p, camera_minvisibleduration_modified_callback)
-
-	p = obs.obs_properties_add_int_slider(camera_group, "camera"+str(i)+"_maxvisibleduration", "Max Visible Duration", 1, 1800, 1)
-	obs.obs_property_set_modified_callback(p, camera_maxvisibleduration_modified_callback)
-	
-	obs.obs_properties_add_button(camera_group, "camera"+str(i)+"_removecamera", "Remove Camera", removecamera_callback)
-
-	obs.obs_properties_add_group(camera_groups, "camera"+str(i)+"_group", "Primary Camera" if i == 0 else "Camera #"+str(i+1), obs.OBS_GROUP_NORMAL, camera_group)
 
 def script_properties():
 	props = obs.obs_properties_create()
@@ -320,11 +231,15 @@ def script_properties():
 
 	obs.obs_properties_add_int_slider(props, "camera_blur", "Camera Blur", 1, 128, 1)
 
-	camera_groups = obs.obs_properties_create()
-	for i in range(len(cameras)):
-		add_camera_group(camera_groups, i)
-	obs.obs_properties_add_group(props, "camera_groups", "Cameras", obs.OBS_GROUP_NORMAL, camera_groups)
-	obs.obs_properties_add_button(props, "add_camera", "Add Camera", addcamera_callback)
+	p = obs.obs_properties_add_list(props, "camera_sourcename", "Camera Source", obs.OBS_COMBO_TYPE_LIST, obs.OBS_COMBO_FORMAT_STRING)
+	obs.obs_property_list_add_string(p, "--Disabled--", "")
+	sources = obs.obs_enum_sources()
+	if sources != None:
+		for source in sources:
+			name = obs.obs_source_get_name(source)
+			obs.obs_property_list_add_string(p, name, name)
+	obs.source_list_release(sources)
+
 	return props
 
 def script_defaults(settings):
@@ -358,15 +273,10 @@ def script_update(settings):
 	fadeout_duration = obs.obs_data_get_double(settings, "fadeout_duration")
 
 	global refresh_interval
-	refresh_interval = obs.obs_data_get_double(settings, "refresh_interval")	
+	refresh_interval = obs.obs_data_get_double(settings, "refresh_interval")
 
-	cameras.clear()
-	for i in range(obs.obs_data_get_int(settings, "cameras")):
-		cameras.append(Camera(
-			obs.obs_data_get_string(settings, "camera"+str(i)+"_sourcename"),
-			obs.obs_data_get_int(settings, "camera"+str(i)+"_minvisibleduration"),
-			obs.obs_data_get_int(settings, "camera"+str(i)+"_maxvisibleduration")
-		))
+	global camera_sourcename
+	camera_sourcename = obs.obs_data_get_string(settings, "camera_sourcename")
 
 def script_load(settings):
 	global hotkey
@@ -398,29 +308,3 @@ class Monitor(object):
 
 	def __hash__(self):
 		return hash(self.hMonitor)
-
-class Camera(object):
-	def __init__(self, source_name, min_visible_duration, max_visible_duration):
-		self.source_name = source_name
-		self.min_visible_duration = min_visible_duration
-		self.max_visible_duration = max_visible_duration
-		self.expiry = 0
-
-	def __str__(self):
-		return self.source_name
-
-	def SetBlur(self, value):
-		set_filter_value(self.source_name, "Blur", "Filter.Blur.Size", int(camera_blur * (value / 100)))
-		if value == 0:
-			self.expiry = time.time() + self.min_visible_duration
-
-	def Show(self):
-		self.expiry = time.time() + random.randint(self.min_visible_duration, self.max_visible_duration)
-		set_filter_value(self.source_name, "Color Correction", "opacity", 100)
-		self.SetBlur(0)
-
-	def Hide(self):
-		set_filter_value(self.source_name, "Color Correction", "opacity", 0)
-
-	def IsExpired(self):
-		return time.time() > self.expiry
